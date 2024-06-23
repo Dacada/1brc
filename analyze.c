@@ -13,10 +13,10 @@
 struct citydata {
   char *str;
   unsigned len;
-  double max;
-  double min;
-  double sum;
-  unsigned count;
+  int max;
+  int min;
+  long sum;
+  unsigned long count;
 };
 
 struct result {
@@ -69,6 +69,7 @@ static inline void insert_name(struct result *result, struct citydata city) {
     }
     city.min = city.max;
     city.sum = city.max;
+    city.count = 1;
     result->cities[result->length] = city;
     result->length++;
     qsort(result->cities, result->length, sizeof(city), citydata_cmp);
@@ -94,7 +95,6 @@ static void *parse_lines(void *arg) {
   enum {
     READING_NAME,
     READING_NUMBER,
-    READING_DECIMAL
   } state = READING_NAME;
   struct citydata current_city;
   current_city.len = 0;
@@ -115,16 +115,9 @@ static void *parse_lines(void *arg) {
       break;
     case READING_NUMBER:
       if (c == '.') {
-        state = READING_DECIMAL;
       } else if (c == '-') {
         negative_number = true;
-      } else {
-        current_city.max += c - '0';
-        current_city.max *= 10;
-      }
-      break;
-    case READING_DECIMAL:
-      if (c == '\n') {
+      } else if (c == '\n') {
         if (negative_number) {
           current_city.max = -current_city.max;
           negative_number = false;
@@ -135,8 +128,8 @@ static void *parse_lines(void *arg) {
         current_city.len = 0;
         //printf("%f\n", current_city.max);
       } else {
+        current_city.max *= 10;
         current_city.max += c - '0';
-        current_city.max /= 10;
       }
       break;
     }
@@ -250,7 +243,7 @@ int main(int argc, char *argv[]) {
     } else {
       if (prev->len > 0) {
         printf("%.*s max:%.1f min:%.1f avg:%.1f\n", prev->len, prev->str,
-               prev->max, prev->min, prev->sum / prev->count);
+               (double)prev->max / 10.0, (double)prev->min / 10.0, (double)prev->sum / (double)prev->count / 10.0);
       }
       count++;
       prev = curr;
