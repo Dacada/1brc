@@ -35,7 +35,7 @@ perf: $(PERF_DATA)
 	perf report -i $(PERF_DATA)
 
 $(PERF_DATA): $(BIN_PRF) $(INPUT)
-	perf record --call-graph dwarf -o perf.data ./$(BIN_PRF) $(INPUT)
+	perf record -o perf.data ./$(BIN_PRF) $(INPUT)
 
 run: $(BIN_OPT) $(INPUT)
 	./average_runtime.sh ./$(BIN_OPT) $(INPUT)
