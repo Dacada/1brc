@@ -8,7 +8,12 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#define MAX_DISTINCT_CITIES 512
+// hashing functions
+#include "lookup3.c"
+
+#define HASHTABLE_SIZE (1 << 12)
+#define HASH_SEED_1 0xb00b135f
+#define HASH_SEED_2 0xcafebeef
 
 struct citydata {
   char *str;
@@ -21,8 +26,6 @@ struct citydata {
 
 struct result {
   struct citydata *cities;
-  unsigned capacity;
-  unsigned length;
 };
 
 struct threadinfo {
@@ -59,31 +62,51 @@ static int citydata_cmp(const void *a, const void *b) {
   }
 }
 
-static inline void insert_name(struct result *result, struct citydata city) {
-  void *res = bsearch(&city, result->cities, result->length, sizeof(city),
-                      citydata_cmp);
-  if (res == NULL) {
-    if (result->length >= result->capacity) {
-      fprintf(stderr, "too many items for capacity\n");
-      abort();
-    }
+static inline bool insert_name_hashed(struct result *result,
+                                      struct citydata city, unsigned hash) {
+  struct citydata current_city = result->cities[hash];
+  if (current_city.count == 0) {
     city.min = city.max;
     city.sum = city.max;
     city.count = 1;
-    result->cities[result->length] = city;
-    result->length++;
-    qsort(result->cities, result->length, sizeof(city), citydata_cmp);
+    current_city = city;
   } else {
-    struct citydata *resdata = res;
-    if (city.max > resdata->max) {
-      resdata->max = city.max;
+    if (citydata_cmp(&city, &current_city) != 0) {
+      return false;
     }
-    if (city.max < resdata->min) {
-      resdata->min = city.max;
+    if (city.max > current_city.max) {
+      current_city.max = city.max;
     }
-    resdata->count++;
-    resdata->sum += city.max;
+    if (city.min < current_city.max) {
+      current_city.min = city.max;
+    }
+    current_city.count++;
+    current_city.sum += city.max;
   }
+  result->cities[hash] = current_city;
+  return true;
+}
+
+static int greatest_hash_i = 0;
+static inline void insert_name(struct result *result, struct citydata city) {
+  unsigned hash1 = HASH_SEED_1;
+  unsigned hash2 = HASH_SEED_2;
+  hashlittle2(city.str, city.len, &hash1, &hash2);
+
+  for (int i = 0; i < HASHTABLE_SIZE; i++) {
+    unsigned h1 = (hash1 + i) & (HASHTABLE_SIZE - 1);
+    unsigned h2 = (hash2 + i) & (HASHTABLE_SIZE - 1);
+    if (insert_name_hashed(result, city, h1) ||
+        insert_name_hashed(result, city, h2)) {
+      if (i > greatest_hash_i) {
+        greatest_hash_i = i;
+      }
+      return;
+    }
+  }
+
+  fprintf(stderr, "hashtable full\n");
+  abort();
 }
 
 // Thread target that parses lines
@@ -107,8 +130,8 @@ static void *parse_lines(void *arg) {
     case READING_NAME:
       if (c == ';') {
         state = READING_NUMBER;
-        current_city.max = 0.0;
-        //printf("  %.*s;", current_city.len, current_city.str);
+        current_city.max = 0;  // use max to carry the parsed measurement instead of copying it everywhere
+        // printf("  %.*s;", current_city.len, current_city.str);
       } else {
         current_city.len++;
       }
@@ -123,10 +146,10 @@ static void *parse_lines(void *arg) {
           negative_number = false;
         }
         state = READING_NAME;
+        // printf("%d\n", current_city.max);
         insert_name(&result, current_city);
         current_city.str = start + i + 1;
         current_city.len = 0;
-        //printf("%f\n", current_city.max);
       } else {
         current_city.max *= 10;
         current_city.max += c - '0';
@@ -188,9 +211,9 @@ int main(int argc, char *argv[]) {
   thread_workload = sb.st_size / num_threads;
 
   // Reserve memory used by all threads
-  all_cities = malloc(sizeof(*all_cities) * MAX_DISTINCT_CITIES * num_threads);
-  for (int i = 0; i < num_threads * MAX_DISTINCT_CITIES; i++) {
-    all_cities[i].len = 0;
+  all_cities = malloc(sizeof(*all_cities) * HASHTABLE_SIZE * num_threads);
+  for (int i = 0; i < num_threads * HASHTABLE_SIZE; i++) {
+    all_cities[i].count = 0;
   }
 
   // Initialize threads
@@ -208,8 +231,7 @@ int main(int argc, char *argv[]) {
       }
       threads[i].size = workload;
       total_workload += workload;
-      threads[i].result.cities = all_cities + i * MAX_DISTINCT_CITIES;
-      threads[i].result.capacity = MAX_DISTINCT_CITIES;
+      threads[i].result.cities = all_cities + i * HASHTABLE_SIZE;
     }
   }
 
@@ -220,36 +242,32 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < num_threads; i++) {
     pthread_join(threads[i].thread, NULL);
   }
+  /* for (int i = 0; i < num_threads; i++) { */
+  /*   parse_lines(&threads[i]); */
+  /* } */
 
-  // Sort all cities again, merge equal ones
-  qsort(all_cities, MAX_DISTINCT_CITIES * num_threads, sizeof(*all_cities), citydata_cmp);
-  unsigned long count = 1;
-  struct citydata *prev = all_cities;
-  for (int i = 1; i < MAX_DISTINCT_CITIES * num_threads; i++) {
-    struct citydata *curr = all_cities + i;
-    if (curr->len == 0) {
-      continue;
+  // Merge all results into one and sort it
+  for (int i = 1; i < num_threads; i++) {
+    for (int j = 0; j < HASHTABLE_SIZE; j++) {
+      struct citydata city = threads[i].result.cities[j];
+      if (city.count > 0) {
+        insert_name(&threads[0].result, city);
+      }
     }
-
-    if (citydata_cmp(curr, prev) == 0) {
-      if (curr->max > prev->max) {
-        prev->max = curr->max;
-      }
-      if (curr->min < prev->min) {
-        prev->min = curr->min;
-      }
-      prev->sum += curr->sum;
-      prev->count += curr->count;
-    } else {
-      if (prev->len > 0) {
-        printf("%.*s max:%.1f min:%.1f avg:%.1f\n", prev->len, prev->str,
-               (double)prev->max / 10.0, (double)prev->min / 10.0, (double)prev->sum / (double)prev->count / 10.0);
-      }
+  }
+  qsort(threads[0].result.cities, HASHTABLE_SIZE, sizeof(*all_cities),
+        citydata_cmp);
+  unsigned long count = 0;
+  for (int i = 0; i < HASHTABLE_SIZE; i++) {
+    struct citydata city = threads[0].result.cities[i];
+    if (city.count > 0) {
       count++;
-      prev = curr;
+      printf("%.*s max:%.1f min:%.1f avg:%.1f\n", city.len, city.str,
+               (double)city.max / 10.0, (double)city.min / 10.0, (double)city.sum / (double)city.count / 10.0);
     }
   }
   printf("Distinct cities: %lu\n", count);
+  printf("Greatest hash: %d\n", greatest_hash_i);
 
   // Unmap the file
   if (munmap(mapped, sb.st_size) == -1) {
