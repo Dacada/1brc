@@ -128,29 +128,33 @@ static inline int parse_line(char *str, struct cityline *city) {
   }
   i++;
 
+  bool neg = str[i] == '-';
+  if (neg) {
+    i++;
+  }
+
   int n = 0;
-  bool neg = false;
   for (;; i++) {
     char c = str[i];
     if (c == '.') {
-      continue;
-    }
-    if (c == '-') {
-      neg = true;
-      continue;
-    }
-    if (c == '\n') {
       break;
     }
     n *= 10;
     n += c - '0';
   }
+  i++;
+
+  n *= 10;
+  n += str[i] - '0';
+  i++; // \n
+  i++;
+
   if (neg) {
     n = -n;
   }
   city->measure = n;
 
-  return i + 1;
+  return i;
 }
 
 // Thread target that parses lines
