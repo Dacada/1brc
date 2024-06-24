@@ -4,3 +4,5 @@ expected.txt
 measurements.txt
 measurements_short.txt
 perf.data
+perf.data.old
+test_output.txt
