@@ -15,9 +15,18 @@
 #define HASH_SEED_1 0xb00b135f
 #define HASH_SEED_2 0xcafebeef
 
-struct citydata {
+struct stringslice {
   char *str;
   unsigned len;
+};
+
+struct cityline {
+  struct stringslice str;
+  int measure;
+};
+
+struct citydata {
+  struct stringslice str;
   int max;
   int min;
   long sum;
@@ -35,9 +44,9 @@ struct threadinfo {
   struct result result;
 };
 
-static int citydata_cmp(const void *a, const void *b) {
-  const struct citydata *aa = a;
-  const struct citydata *bb = b;
+static int stringslice_cmp(const void *a, const void *b) {
+  const struct stringslice *aa = a;
+  const struct stringslice *bb = b;
 
   for (unsigned i = 0;; i++) {
     bool as = aa->len <= i;
@@ -66,22 +75,19 @@ static inline bool insert_name_hashed(struct result *result,
                                       struct citydata city, unsigned hash) {
   struct citydata current_city = result->cities[hash];
   if (current_city.count == 0) {
-    city.min = city.max;
-    city.sum = city.max;
-    city.count = 1;
     current_city = city;
   } else {
-    if (citydata_cmp(&city, &current_city) != 0) {
+    if (stringslice_cmp(&city.str, &current_city.str) != 0) {
       return false;
     }
     if (city.max > current_city.max) {
       current_city.max = city.max;
     }
-    if (city.min < current_city.max) {
-      current_city.min = city.max;
+    if (city.min < current_city.min) {
+      current_city.min = city.min;
     }
-    current_city.count++;
-    current_city.sum += city.max;
+    current_city.count += city.count;
+    current_city.sum += city.sum;
   }
   result->cities[hash] = current_city;
   return true;
@@ -91,7 +97,7 @@ static int greatest_hash_i = 0;
 static inline void insert_name(struct result *result, struct citydata city) {
   unsigned hash1 = HASH_SEED_1;
   unsigned hash2 = HASH_SEED_2;
-  hashlittle2(city.str, city.len, &hash1, &hash2);
+  hashlittle2(city.str.str, city.str.len, &hash1, &hash2);
 
   for (int i = 0; i < HASHTABLE_SIZE; i++) {
     unsigned h1 = (hash1 + i) & (HASHTABLE_SIZE - 1);
@@ -109,53 +115,66 @@ static inline void insert_name(struct result *result, struct citydata city) {
   abort();
 }
 
+// Parse a single line
+static inline int parse_line(char *str, struct cityline *city) {
+  city->str.str = str;
+
+  int i = 0;
+  for (;; i++) {
+    if (str[i] == ';') {
+      city->str.len = i;
+      break;
+    }
+  }
+  i++;
+
+  int n = 0;
+  bool neg = false;
+  for (;; i++) {
+    char c = str[i];
+    if (c == '.') {
+      continue;
+    }
+    if (c == '-') {
+      neg = true;
+      continue;
+    }
+    if (c == '\n') {
+      break;
+    }
+    n *= 10;
+    n += c - '0';
+  }
+  if (neg) {
+    n = -n;
+  }
+  city->measure = n;
+
+  return i + 1;
+}
+
 // Thread target that parses lines
 static void *parse_lines(void *arg) {
   struct threadinfo *info = arg;
 
   char *start = info->start;
   struct result result = info->result;
-  enum {
-    READING_NAME,
-    READING_NUMBER,
-  } state = READING_NAME;
-  struct citydata current_city;
-  current_city.len = 0;
-  current_city.str = start;
+  struct cityline current_city;
   bool negative_number = false;
 
-  for (unsigned long i = 0; i < info->size; i++) {
-    char c = start[i];
-    switch (state) {
-    case READING_NAME:
-      if (c == ';') {
-        state = READING_NUMBER;
-        current_city.max = 0;  // use max to carry the parsed measurement instead of copying it everywhere
-        // printf("  %.*s;", current_city.len, current_city.str);
-      } else {
-        current_city.len++;
-      }
-      break;
-    case READING_NUMBER:
-      if (c == '.') {
-      } else if (c == '-') {
-        negative_number = true;
-      } else if (c == '\n') {
-        if (negative_number) {
-          current_city.max = -current_city.max;
-          negative_number = false;
-        }
-        state = READING_NAME;
-        // printf("%d\n", current_city.max);
-        insert_name(&result, current_city);
-        current_city.str = start + i + 1;
-        current_city.len = 0;
-      } else {
-        current_city.max *= 10;
-        current_city.max += c - '0';
-      }
-      break;
-    }
+  unsigned long i = 0;
+  while (i < info->size) {
+    int ii = parse_line(start + i, &current_city);
+    /* printf("%.*s;%d\n", current_city.str.len, current_city.str.str, */
+    /*        current_city.measure); */
+    struct citydata new_city;
+    new_city.count = 1;
+    new_city.max = current_city.measure;
+    new_city.min = current_city.measure;
+    new_city.sum = current_city.measure;
+    new_city.str = current_city.str;
+    insert_name(&result, new_city);
+    i += ii;
   }
   info->result = result;
 
@@ -256,14 +275,15 @@ int main(int argc, char *argv[]) {
     }
   }
   qsort(threads[0].result.cities, HASHTABLE_SIZE, sizeof(*all_cities),
-        citydata_cmp);
+        stringslice_cmp);
   unsigned long count = 0;
   for (int i = 0; i < HASHTABLE_SIZE; i++) {
     struct citydata city = threads[0].result.cities[i];
     if (city.count > 0) {
       count++;
-      printf("%.*s max:%.1f min:%.1f avg:%.1f\n", city.len, city.str,
-               (double)city.max / 10.0, (double)city.min / 10.0, (double)city.sum / (double)city.count / 10.0);
+      printf("%.*s max:%.1f min:%.1f avg:%.1f\n", city.str.len, city.str.str,
+             (double)city.max / 10.0, (double)city.min / 10.0,
+             (double)city.sum / (double)city.count / 10.0);
     }
   }
   printf("Distinct cities: %lu\n", count);
