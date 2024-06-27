@@ -1,6 +1,7 @@
 CC = gcc
-CFLAGS_OPT = -O3 -march=native -ftree-vectorize
-CFLAGS_PRF = -O3 -march=native -ftree-vectorize -g -fno-omit-frame-pointer
+CFLAGS_COMMON = -O3 -march=native -ftree-vectorize -Wsuggest-attribute=pure -Wsuggest-attribute=const
+CFLAGS_OPT = $(CFLAGS_COMMON)
+CFLAGS_PRF = $(CFLAGS_COMMON) -g -fno-omit-frame-pointer
 
 SRC = analyze.c
 BIN_OPT = analyze

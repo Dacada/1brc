@@ -12,7 +12,7 @@
 #include "lookup3.c"
 
 #define HASHTABLE_SIZE (1 << 12)
-#define HASH_SEED_1 0xb00b135f
+#define HASH_SEED_1 0xb00b1350
 #define HASH_SEED_2 0xcafebeef
 
 struct stringslice {
@@ -44,6 +44,7 @@ struct threadinfo {
   struct result result;
 };
 
+__attribute__((pure))
 static int stringslice_cmp(const void *a, const void *b) {
   const struct stringslice *aa = a;
   const struct stringslice *bb = b;
@@ -93,7 +94,6 @@ static inline bool insert_name_hashed(struct result *result,
   return true;
 }
 
-static int greatest_hash_i = 0;
 static inline void insert_name(struct result *result, struct citydata city) {
   unsigned hash1 = HASH_SEED_1;
   unsigned hash2 = HASH_SEED_2;
@@ -104,9 +104,6 @@ static inline void insert_name(struct result *result, struct citydata city) {
     unsigned h2 = (hash2 + i) & (HASHTABLE_SIZE - 1);
     if (insert_name_hashed(result, city, h1) ||
         insert_name_hashed(result, city, h2)) {
-      if (i > greatest_hash_i) {
-        greatest_hash_i = i;
-      }
       return;
     }
   }
@@ -265,11 +262,13 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < num_threads; i++) {
     pthread_join(threads[i].thread, NULL);
   }
+
+  // Or run them sequentially for testing
   /* for (int i = 0; i < num_threads; i++) { */
   /*   parse_lines(&threads[i]); */
   /* } */
 
-  // Merge all results into one and sort it
+  // Merge all hash tables into the first
   for (int i = 1; i < num_threads; i++) {
     for (int j = 0; j < HASHTABLE_SIZE; j++) {
       struct citydata city = threads[i].result.cities[j];
@@ -278,20 +277,20 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+
+  // Treat the first hash table as a list and sort it
   qsort(threads[0].result.cities, HASHTABLE_SIZE, sizeof(*all_cities),
         stringslice_cmp);
-  unsigned long count = 0;
+
+  // Output the results -- Not the exact correct output format but I'm not dealing with that
   for (int i = 0; i < HASHTABLE_SIZE; i++) {
     struct citydata city = threads[0].result.cities[i];
     if (city.count > 0) {
-      count++;
-      printf("%.*s max:%.1f min:%.1f avg:%.1f\n", city.str.len, city.str.str,
+      printf("%.*s=%.1f/%.1f/%.1f\n", city.str.len, city.str.str,
              (double)city.max / 10.0, (double)city.min / 10.0,
              (double)city.sum / (double)city.count / 10.0);
     }
   }
-  printf("Distinct cities: %lu\n", count);
-  printf("Greatest hash: %d\n", greatest_hash_i);
 
   // Unmap the file
   if (munmap(mapped, sb.st_size) == -1) {

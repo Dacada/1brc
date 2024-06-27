@@ -171,6 +171,7 @@ and these came close:
  hashlittle() has to dance around fitting the key bytes into registers.
 --------------------------------------------------------------------
 */
+__attribute__((pure))
 uint32_t hashword(
 const uint32_t *k,                   /* the key, an array of uint32_t values */
 size_t          length,               /* the length of the key, in uint32_ts */
@@ -279,7 +280,7 @@ Use for hash table lookup, or anything where one collision in 2^^32 is
 acceptable.  Do NOT use for cryptographic purposes.
 -------------------------------------------------------------------------------
 */
-
+__attribute__((pure))
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval)
 {
   uint32_t a,b,c;                                          /* internal state */
@@ -640,8 +641,9 @@ void hashlittle2(
  * hashbig():
  * This is the same as hashword() on big-endian machines.  It is different
  * from hashlittle() on all machines.  hashbig() takes advantage of
- * big-endian byte ordering. 
+ * big-endian byte ordering.
  */
+__attribute__((pure))
 uint32_t hashbig( const void *key, size_t length, uint32_t initval)
 {
   uint32_t a,b,c;
