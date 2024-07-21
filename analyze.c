@@ -1,3 +1,5 @@
+#include <emmintrin.h>
+#include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -112,17 +114,32 @@ static inline void insert_name(struct result *result, struct citydata city) {
   abort();
 }
 
+// ASSUMPTIONS: c is always present in str and str is allocated such that there are at least 16 bytes after the
+// appearence of c
+__attribute__((pure))
+static inline unsigned find_character(const char *str, char c) {
+  unsigned i = 0;
+  int mask = 0;
+  __m128i target = _mm_set1_epi8(c);
+
+  while (!mask) {
+    __m128i chunk = _mm_loadu_si128((__m128i *)(str + i));
+    __m128i res = _mm_cmpeq_epi8(chunk, target);
+    mask = _mm_movemask_epi8(res);
+    i += 16;
+  }
+
+  return __builtin_ffs(mask) - 1 + i - 16;
+}
+
 // Parse a single line
 static inline int parse_line(char *str, struct cityline *city) {
   city->str.str = str;
 
-  int i = 0;
-  for (;; i++) {
-    if (str[i] == ';') {
-      city->str.len = i;
-      break;
-    }
-  }
+  unsigned i;
+
+  i = find_character(str, ';');
+  city->str.len = i;
   i++;
 
   bool neg = str[i] == '-';
@@ -161,7 +178,6 @@ static void *parse_lines(void *arg) {
   char *start = info->start;
   struct result result = info->result;
   struct cityline current_city;
-  bool negative_number = false;
 
   unsigned long i = 0;
   while (i < info->size) {
@@ -212,8 +228,8 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  // Map the file into memory
-  mapped = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  // Map the file into memory, we map it 16 bytes larger to ensure SIMD instructions will not read out of bounds.
+  mapped = mmap(NULL, sb.st_size + 16, PROT_READ, MAP_PRIVATE, fd, 0);
   if (mapped == MAP_FAILED) {
     perror("mmap");
     exit(EXIT_FAILURE);
